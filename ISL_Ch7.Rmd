@@ -1,0 +1,271 @@
+---
+title: "ISL_Ch7Lab"
+author: "Michael Rose"
+date: "October 7, 2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(ISLR)
+library(splines)
+library(gam)
+library(akima)
+attach(Wage)
+```
+
+# Polynomial Regression and Step Functions
+
+Our polynomial fit below returns a matrix whose columns are a basis of othogonal polynomials, which means that each column is a linear combination of the variables age, age^2, age^3, age^4.
+
+```{r, echo=TRUE}
+# poly fit with degree 4
+poly_fit <- lm(wage~poly(age, 4), data=Wage)
+# see coefficients
+coef(summary(poly_fit))
+```
+
+We can use the poly function to obtain the age, age^2, age^3 and age^4 directly by setting the argument raw to true. This does not affect the model in a meaningful way, but the choice of basis affects the coefficient estimates (and not the fitted values obtained).
+
+```{r, echo=TRUE}
+poly_fit_2 <- lm(wage~poly(age, 4, raw=T), data=Wage)
+coef(summary(poly_fit_2))
+```
+
+We can also create the polynomial basis functions as needed, while protecting terms like age^2 with the wrapper function I() for indicator variable. The age^2 needs to be protected because the symbol ^ has a special meaning in formulas. 
+
+```{r, echo=TRUE}
+# indicator wrappers
+poly_fit_3 <- lm(wage~age+I(age^2)+I(age^3)+I(age^4), data=Wage)
+# the same as above, but more compactly. This builds a matrix from a collection of vectors; any function call such as cbind() inside of a formula also serves as a wrapper 
+poly_fit_3b <- lm(wage~cbind(age, age^2, age^3, age^4), data=Wage)
+coef(poly_fit_3)
+```
+
+We can now create a grid of values for age at which we want predictions, and then call the generic predict() function with standard errors included
+
+```{r, echo=TRUE}
+# set up an age range 
+agelims <- range(age) 
+# make a grid with all the age range values
+age.grid <- seq(from=agelims[1], to=agelims[2])
+# predict function
+preds <- predict(poly_fit, newdata = list(age = age.grid), se=TRUE)
+# standard error
+se.bands <- cbind(preds$fit + 2*preds$se.fit, preds$fit-2*preds$se.fit)
+# plot the data and add the fit from the degree 4 polynomial
+# set visuals. mar and oma arguments allow us to control the margins of the plot 
+par(mfrow=c(2,2), mar=c(4.5, 4.5, 1, 1), oma=c(0,0,4,0))
+# plot 
+plot(age, wage, xlim=agelims, cex=.5, col="darkgrey")
+# set title
+title("Degree 4 Polynomial", outer=T)
+# add poly fit line
+lines(age.grid, preds$fit, lwd=2, col="blue")
+matlines(age.grid, se.bands, lwd=1, col = "blue", lty=3)
+```
+
+In performing polynomial regression, we need to decide on a degree to use. We can do this using hypothesis tests. We are now going to fit models ranging from linear to a degree 5 polynomial in order to determine the simplest model that displays the relationship between wage and age. 
+
+The anova() function performs an analysis of variance using an F-Test to test the null hypothesis that a model, m1, is sufficient to explain the data against the alternative hypothesis that a more complex model, m2, is required. In order to use anova, our models must be nested - or our model m1 must be a subset of the predictors in m2. 
+
+```{r, echo=TRUE}
+fit.1 <- lm(wage~age, data=Wage)
+fit.2 <- lm(wage~poly(age, 2), data=Wage)
+fit.3 <- lm(wage~poly(age, 3), data=Wage)
+fit.4 <- lm(wage~poly(age, 4), data=Wage)
+fit.5 <- lm(wage~poly(age, 5), data=Wage)
+
+anova(fit.1, fit.2, fit.3, fit.4, fit.5)
+```
+
+The p-value comparing the linear model 1 to the quadratic model 2 is essentially 0 - indicating that a linear fit is not sufficient. Similarly, the p-value comparing the quadratic model 2 to the cubic model 3 is also very low,hence the quadratic fit is also insufficient. Finally, we see that the p-value for the degree 4 polynomial is just at a 0.05 threshold, and therefore significant. As a result, we settle on either a quartic or cubic polynomial as a representation for our data. The quintic model is not significant enough for justification. 
+
+We could have found the same information without the anova as well, since our poly() function generators orthogonal polynomials
+
+```{r, echo=TRUE}
+coef(summary(fit.5))
+```
+
+The p-values above are the same. The ANOVA is worthwhile because it works whether or not we used orthogonal polynomials and when we have other terms in the model a well. For example: 
+
+```{r, echo=TRUE}
+fit.1 <- lm(wage~education+age, data=Wage)
+fit.2 <- lm(wage~education+poly(age, 2), data=Wage)
+fit.3 <- lm(wage~education+poly(age, 3), data=Wage)
+anova(fit.1, fit.2, fit.3)
+```
+
+As an alternative to ANOVA, we can also use cross validation. 
+
+Now we can consider the task of predicting whether an individual earns more than $250,000 per year. 
+
+We first create an appropriate respinse vector, and then apply the generalized linear model function using family="binomial" to fit a  polynomial logistic regression model.
+
+```{r, echo=TRUE}
+# uses indicator variable wrapper to create a binary response variable on the fly. The expression wage>250 evaluates to a boolean vector which glm coerces to binary by setting the trues to 1 and the falses to 0 
+fit <- glm(I(wage>250)~poly(age, 4), data=Wage, family=binomial)
+# predict function
+preds <- predict(fit, newdata=list(age=age.grid), se=T)
+```
+
+When using logistic regression, calculating confidence intervals is slightly more involved than in the linear regression case. The default prediction type for a glm() model is type="link". With this typing we get predictions for the logit. In order to obtain confidence intervals for Pr(Y=1|X) we use a transformation:
+
+```{r, echo=TRUE}
+# transform
+pfit <- exp(preds$fit) / (1 + exp(preds$fit))
+se.bands.logit <- cbind(preds$fit + 2*preds$se.fit, preds$fit-2*preds$se.fit)
+se.bands <- exp(se.bands.logit)/(1+exp(se.bands.logit))
+# predict. type=response directly computes the probabilities by selecting the type="response" option in the predict function
+preds <- predict(fit, newdata = list(age=age.grid), type="response", se=T)
+# plot 
+plot(age, I(wage>250), xlim=agelims, type="n", ylim=c(0,.2))
+# the jitter function adds static around the age values so that observations with the same age value don't cover each other up. This is often called a rug plot
+points(jitter(age), I((wage>250)/5), cex=0.5, pch="|", col="darkgrey")
+lines(age.grid, pfit, lwd=2, col="blue")
+matlines(age.grid, se.bands, lwd=1, col="blue", lty=3)
+```
+
+Let's fit a step function: 
+
+```{r, echo=TRUE}
+table(cut(age, 4))
+fit <- lm(wage~cut(age, 4), data=Wage)
+coef(summary(fit))
+```
+
+Cut() picked the cutpoints at 33.5, 49, and 64.5 years of age. We could have used the breaks() function to pick specific points instead of using a uniform number of folds. The function cut() returns an ordered categorical variable, the lm() function then creates a set of dummy variables for use in regression. In our lm(), the age below 33.5 was left out, so our intercept of $94,158 can be interpreted as the average additional salary for those under 33.5 years of age, and each predictor can be seen as the additional salary for those in older age groups. 
+
+
+# Splines 
+
+We can fit splines in R by constructing an appropriate matrix of basis functions. The bs() function generates the entire matrix of basis functions for splines with the specified set of knots. By default, cubic splines are produced. Lets fit wage to age:
+
+```{r, echo=TRUE}
+# fit spline model with knots at 25, 40, 60
+fit <- lm(wage~bs(age,knots=c(25,40,60)), data=Wage)
+# prediction
+pred <- predict(fit, newdata=list(age=age.grid), se=T)
+# gen plot
+plot(age, wage, col="gray")
+# add fit
+lines(age.grid, pred$fit, lwd=2)
+# add standard errors
+lines(age.grid, pred$fit+2*pred$se, lty="dashed")
+lines(age.grid, pred$fit-2*pred$se, lty="dashed")
+```
+
+We could also use the df option to produce a spline with knots at uniform quantiles of the data
+
+```{r, echo=TRUE}
+dim(bs(age, knots=c(25, 40, 60)))
+dim(bs(age, df=6))
+attr(bs(age, df=6), "knots")
+```
+
+In this case, R chooses 33.75, 42, and 51 which represent the 25th, 50th, and 75th percentile of the data. bs() also has a degree argument, so we can fit splines with degrees other than the default cubic.
+
+Instead we can fit using a natural spline, which is a spline with added parameters for the tails to prevent wagging. 
+
+```{r, echo=TRUE}
+fit2 <- lm(wage~ns(age, df=4), data=Wage)
+pred2 <- predict(fit2, newdata=list(age=age.grid), se=T)
+plot(age, wage, col="gray")
+lines(age.grid, pred2$fit, col="red", lwd=2)
+```
+
+As with the bs() function, we could instead specify the knots directly using the knots option. 
+
+```{r, echo=TRUE}
+plot(age, wage, xlim = agelims, cex=.5, col="darkgrey")
+title("Smoothing Spline")
+fit <- smooth.spline(age, wage, df=16)
+fit2 <- smooth.spline(age, wage, cv=TRUE)
+fit2$df
+lines(fit, col="red", lwd=2)
+lines(fit2, col="blue", lwd=2)
+legend("topright", legend=c("16 DF", "6.8 DF"), col=c("red", "blue"), lty=1, lwd=2, cex=0.8)
+```
+
+In the first call, we specified Degrees of Freedom (16). In the second, we had the function perform cross validation to find the optimal lambda value (smoothness), which happened to be 6.8 Degrees of Freedom. 
+
+We can also perform local regression:
+
+```{r, echo=TRUE}
+plot(age, wage, xlim=agelims, cex=.5, col="darkgrey")
+title("Local Regression")
+fit <- loess(wage~age, span=.2, data=Wage)
+fit2 <- loess(wage~age, span=.5, data=Wage)
+lines(age.grid, predict(fit, data.frame(age=age.grid)), col="red", lwd=2)
+lines(age.grid, predict(fit2, data.frame(age=age.grid)), col="blue", lwd=2)
+legend("topright", legend=c("Span = 0.2", "Span = 0.5"), col=c("red", "blue"), lty=1, lwd=2, cex=0.8)
+```
+
+
+# Generalized Additive Models
+
+We are now going to fit a generalized additive model to predict wage using natural spline functions of year and age, treating education as a qualitative predictor. Since this is just a big linear regression model using an appropriate choice of basis functions, we can simply do this using the lm() function. 
+
+```{r, echo=TRUE}
+# gam linear model with natural splines for year and age
+gam1 <- lm(wage~ns(year, 4)+ns(age, 5)+education, data=Wage)
+```
+
+We can not fit the model using smoothing splines rather than natural splines. In order to fit more general sorts of GAMs, using smoothing splines or other components that cannot be expressed in terms of basis functions and then fit using least squares regression, we will need to use the gam library in R. 
+
+```{r, echo=TRUE}
+# the s() function tells gam to let us use a smoothing spline. Here we specify that year will have 4 degrees of freedom and age will have 5 degrees of freedom. Since education is qualitative, we leave it as is and it is converted into 4 dummy variables. 
+gam.m3 <- gam(wage~s(year, 4)+s(age, 5)+education, data=Wage)
+# plot 
+par(mfrow=c(1,3))
+plot(gam.m3, se=TRUE, col="blue")
+
+# plot using plot.gam
+plot.gam(gam1, se=TRUE, col="red")
+```
+
+We can perform a series of ANOVA tests in order to determine which of these three models is best: a GAM that excludes year, a GAM that uses a linear function of year, or a GAM that uses a spline function of year. 
+
+```{r, echo=TRUE}
+gam.m1 <- gam(wage~s(age, 5)+education, data=Wage)
+gam.m2 <- gam(wage~year+s(age, 5)+education, data=Wage)
+anova(gam.m1, gam.m2, gam.m3, test="F")
+summary(gam.m3)
+```
+
+From the above, we see that the linear GAM with year performs better than the linear function without year. There is no evidence that a nonlinear function performs better than the linear model, however. 
+
+From the summary, we see that our ANOVA for parametric effects shows that age, year, and education are all important. From our ANOVA for nonparametric effects we see that age likely needs a nonlinear approach. 
+
+We can make predictions with GAM models like we do with linear models: 
+
+```{r, echo=TRUE}
+preds <- predict(gam.m2, newdata=Wage)
+# lo() function allows us to use local regression fits as building blocks in a Generalized Additive Model
+gam.lo <- gam(wage~s(year, df=4)+lo(age, span=0.7)+education, data=Wage)
+# plot
+par(mfrow=c(1,3))
+plot.gam(gam.lo, se=TRUE, col="green")
+```
+
+```{r, echo=TRUE}
+# using local regression function to create interactions before calling the gam() function
+gam.lo.i <- gam(wage~lo(year, age, span=0.5)+education, data=Wage)
+plot(gam.lo.i)
+```
+
+In order to fit a logistic regression GAM, we once again use the I() function in constructing the binary response variable
+
+```{r, echo=TRUE}
+gam.lr <- gam(I(wage>250)~year+s(age, df=5)+education, family=binomial, data=Wage)
+par(mfrow=c(1,3))
+plot(gam.lr, se=T, col="green")
+table(education, I(wage>250))
+```
+
+```{r, echo=TRUE}
+# GAM without < HS Grad
+gam.lr.s <- gam(I(wage>250)~year+s(age, df=5)+education, family=binomial, data=Wage, subset=(education!="1. < HS Grad"))
+# plot
+plot(gam.lr.s, se=T, col="green")
+```

@@ -1,0 +1,178 @@
+---
+title: "ISL_Chapter8"
+author: "Michael Rose"
+date: "October 14, 2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(MASS)
+library(ISLR)
+library(tree)
+library(randomForest)
+library(gbm)
+```
+
+## Fitting Regression Trees
+
+We will be fitting a regression tree to the Boston data set. 
+
+```{r, echo=TRUE}
+# reproducibility
+set.seed(1)
+# create training set 
+train <- sample(1:nrow(Boston), nrow(Boston)/2)
+tree.boston <- tree(medv~., Boston, subset=train)
+summary(tree.boston)
+```
+
+Our output above indicates that 3 of the variables have been used in constructing the tree, lstat, rm, and dis. In the context of trees, the deviance is the sum of squared errors for the tree. 
+
+```{r, echo=TRUE}
+plot(tree.boston)
+text(tree.boston, pretty=0)
+```
+
+The variable lstat measures the percentage of individuals with lower socioeconomic status. The tree indicates that lower values of lstat correspond to more expensive houses. 
+
+The tree predicts a median house price of $46,400 for larger homes in suburbs in which residents have high socioeconomic status (lstat < 9.715 and rm >= 7.437). 
+
+Lets see if pruning the tree will increase performance. 
+
+```{r, echo=TRUE}
+cv.boston <- cv.tree(tree.boston)
+plot(cv.boston$size, cv.boston$dev, type='b')
+```
+
+In this case, cross validation has selected the most complex tree. We can still prune the tree if we wish to though: 
+
+```{r, echo=TRUE}
+prune.boston <- prune.tree(tree.boston, best=5)
+plot(prune.boston)
+text(prune.boston, pretty=0)
+```
+
+This looks much better. In keeping with our cross validation results, we use the unpruned tree to make predictions on the test set. 
+
+```{r, echo=TRUE}
+yhat <- predict(tree.boston, newdata=Boston[-train,])
+boston.test <- Boston[-train, "medv"]
+plot(yhat, boston.test)
+abline(0, 1)
+mean((yhat-boston.test)^2)
+```
+
+As shown above, the test set mean squared error associated with our regression tree is 25.05. The sqrt(MSE) is around 5.005, indicating that this model leads to test predictions that are within around $5,005 of the true median home value for the suburb. 
+
+## Bagging and Random Forests 
+
+Since bagging is a special case of a random forest where m = p, we can use the randomforest() function to perform both random forests and bagging. 
+
+```{r, echo=TRUE}
+# r e p r o d u c i b i l i t y
+set.seed(8)
+# random forest function
+# mtry=13 is the number of predictors considered for each split in the tree. Since we have 13 predictors, we are using bagging (m=p).
+bag.boston <- randomForest(medv~., data=Boston, subset=train, mtry=13, importance=TRUE)
+bag.boston
+```
+
+Test set:
+
+```{r, echo=TRUE}
+yhat.bag <- predict(bag.boston, newdata=Boston[-train,])
+plot(yhat.bag, boston.test)
+abline(0,1)
+mean((yhat.bag-boston.test)^2)
+```
+
+The test set MSE associated with the bagged regression tree is 13.5, almost half of what we obtained using the optimally pruned single tree. We can change the number of trees grown by randomForest() using the ntree argument
+
+```{r, echo=TRUE}
+set.seed(3)
+# bag restricted to 25 trees
+bag.boston <- randomForest(medv~., data=Boston, subset=train, mtry=13, ntree=25)
+# fit tree
+yhat.bag <- predict(bag.boston, newdata=Boston[-train,])
+# calc MSE
+mean((yhat.bag-boston.test)^2)
+```
+
+Our MSE has risen to 14.59, a marked increase from our bagging above which had more than 25 trees. 
+
+When growing a random forest, all we need to do is change the mtry parameter. The default parameter of mtry is p/3 when building a randomForest out of regression trees and sqrt(p) variables when building a randomForest out of classification trees. 
+
+Here we create a random forest with mtry=6
+
+```{r, echo=TRUE}
+# reproducibility
+set.seed(16)
+
+# create randomForest 
+rf.boston <- randomForest(medv~., data=Boston, subset=train, mtry=6, importance=TRUE)
+# fit model
+yhat.rf <- predict(rf.boston, newdata=Boston[-train,])
+# MSE
+mean((yhat.rf-boston.test)^2)
+```
+
+Our MSE is 11.46, indicating an improvement over bagging for this case. Using the importance() function, we can view the importance of each variable. 
+
+```{r, echo=TRUE}
+importance(rf.boston)
+```
+
+Above, two measures of variable importance are reported. The first column represents the % increase in MSE, or the decrease in accuracy prediction when the given variable is excluded from the model. The second column indicates the decrease in node purity that results from splits over that variable, averaged over all trees. 
+
+We can plot these importance measures using the varImpPlot() function:
+
+```{r, echo=TRUE}
+varImpPlot(rf.boston)
+```
+
+These charts indicate that across all of the trees included in the random forest, the wealth level of the community (lstat) and the house size (rm) are by far the 2 most important variables. 
+
+## Boosting 
+
+We will use the gbm package, and within it, the gbm() function, to fit boosted regression trees to the Boston data set. We run gbm() with the option distribution="gaussian" since this is a regression problem. If it were a binary classification problem, we would use distribution="bernoulli". The argument n.trees=5000 indicates we want 5000 trees and the option interaction.depth=4 limits the depth of each tree to 4 nodes. 
+
+```{r, echo=TRUE}
+# reproducibility
+set.seed(24)
+# boosting function
+boost.boston <- gbm(medv~., data=Boston[-train,], distribution = "gaussian", n.trees = 5000, interaction.depth = 4)
+# summary
+summary(boost.boston)
+```
+
+We see from the summary above that lstat and rm are the most important variables by a lot. We can also produce partial dependence plots for these two variables. 
+
+Partial Dependence Plots illustrate the marginal effect of the selected variables on the response after integrating out the other variables.
+
+```{r, echo=TRUE}
+par(mfrow=c(1,2))
+plot(boost.boston, i="rm")
+plot(boost.boston, i="lstat")
+```
+
+In this case, median housing prices are increasing with rm and decreasing with lstat. 
+ 
+We can now use the boosted model to predict medv on the test set:
+
+```{r, echo=TRUE}
+yhat.boost <- predict(boost.boston, newdata = Boston[-train ,],
+n.trees = 5000)
+mean((yhat.boost-boston.test)^2)
+```
+
+The test MSE above is showing 6.42, which would be > 100% improvement over random forest. Unfortunately, the book shows 11.8 for a similar test, so there is an error somewhere. Lets apply a shrinking parameter to see if it changes the test MSE:
+
+```{r, echo=TRUE}
+# boost function with lambda shrinkage parameter
+boost.boston <- gbm(medv~., data=Boston[train,], distribution = "gaussian", n.trees = 5000, interaction.depth = 4, shrinkage = 0.2, verbose = F)
+# fit
+yhat.boost <- predict(boost.boston, newdata=Boston[-train,], n.trees=5000)
+# MSE
+mean((yhat.boost-boston.test)^2)
+```

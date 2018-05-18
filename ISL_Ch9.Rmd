@@ -1,0 +1,265 @@
+---
+title: "ISL_Ch9"
+author: "Michael Rose"
+date: "October 23, 2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(e1071)
+library(ROCR)
+library(ISLR)
+```
+
+
+# Support Vector Classifier
+
+First we will use the e1071 package for its svm() function. svm() allows us to fit a support vector classifier when the argument kernel="linear" is used. The cost argument allows us to specify the cost of a violation to the margin. 
+
+When the cost is small, the margins will be wide and many support vectors will be on the margin or will violate the margin. When the cost is large, the margin will be narrow and very few support vectors will be on or in violation of the margin.
+
+First we will demonstrate this using a two dimensional randomly generated data set: 
+
+```{r, echo=TRUE}
+# reproducibility
+set.seed(1)
+
+# set up matrix
+x <- matrix(rnorm(20*2), ncol=2)
+y <-c(rep(-1, 10), rep(1, 10))
+x[y==1,] <- x[y==1,] + 1
+
+# plot
+plot(x, col=(3-y))
+```
+
+From the plot above, we see that the observations are not linearly seperable. 
+
+Now we will fit the support vector classifier:
+
+```{r, echo=TRUE}
+# set up data frame
+dat <- data.frame(x = x, y = as.factor(y))
+# create Support Vector Machine fit
+svmfit <- svm(y~., data=dat, kernel="linear", cost=10, scale=FALSE)
+# plot
+plot(svmfit, dat)
+```
+
+In the plot above, we can see that only 1 observation has been misclassified. The support vectors are shown as x's and the rest of the observations are 0s. We can also find the specific observations that serve as support vectors with the following: 
+
+```{r, echo=TRUE}
+# shows support vectors
+svmfit$index
+
+# shows summary of fit
+summary(svmfit)
+
+```
+
+This tells us that a linear kernel was used with cost = 10, and that there are 7 support vectors, 4 in one class and 3 in the other. 
+
+What if we used a smaller cost value parameter? 
+
+```{r, echo=TRUE}
+svmfit <- svm(y~., data=dat, kernel="linear", cost=0.1, scale=FALSE)
+plot(svmfit, dat)
+svmfit$index
+```
+
+Now we have a much larger set of support vectors, due to a wider margin. 
+
+Unfortunately, svm() does not output the coefficients of the linear decision boundary or the width of the margin. 
+
+The e1071 library includes a built in tune() function which performs 10x cross validation. 
+
+The following command indicates that we want to compare SVMs with a linear kernel, using a range of values of the cost parameter. 
+
+```{r, echo=TRUE}
+# reproducibility
+set.seed(8)
+# create cross validation
+tune.out <- tune(svm, y~., data=dat, kernel="linear", ranges = list(cost=c(0.001, 0.01, 0.1, 1, 5, 10, 100)))
+# return cross validation errors
+summary(tune.out)
+```
+
+We see from the above summary that a cost parameter of 0.1 results in the lowest cross validation error rate. The tune() function stores the best model obtained, which can be accessed as follows:
+
+```{r, echo=TRUE}
+bestmod <- tune.out$best.model
+summary(bestmod)
+```
+
+As we can see above, the best model has a cost of 0.1, 16 support vectors (with 8 on each side) and 2 levels. 
+
+We can use the predict() function to predict a class label on a set of test observations. We will begin by generating a test data set. 
+
+```{r, echo=TRUE}
+# create test data matrix
+xtest <- matrix(rnorm(20*2), ncol=2)
+ytest <- sample(c(-1,1), 20, rep=TRUE)
+xtest[ytest==1,]=xtest[ytest==1,]+1
+testdat <- data.frame(x=xtest, y=as.factor(ytest))
+```
+
+Now we will use the best model obtained through cross validation to make predictions:
+
+```{r, echo=TRUE}
+set.seed(16)
+ypred <- predict(bestmod, testdat)
+table(predict = ypred, truth=testdat$y)
+```
+
+
+With this value of cost, we got 15/20 correct, or 75%. What if we shrink the cost parameter further to 0.01?
+
+```{r, echo=TRUE}
+svmfit <- svm(y~., data=dat, kernel="linear", cost=0.01, scale=FALSE)
+ypred <- predict(svmfit, testdat)
+table(predict=ypred, truth=testdat$y)
+```
+
+Now we get a ration of 13:7 correct to wrong. 
+
+Now let us consider a case in which the two classes are linearly seperable. We can then find the seperating hyperplane using the svm() function. 
+
+```{r, echo=TRUE}
+x[y==1,]=x[y==1,]+0.5
+plot(x, col=(y+5)/2, pch=19)
+```
+
+Now, as we can see from the plot above, out observations are just barely linearly seperable. We will fit the support vector classifier and plot the resulting hyperplane using a very large value of cost so that no observations are misclassified. 
+
+```{r, echo=TRUE}
+dat <- data.frame(x=x, y=as.factor(y))
+svmfit <- svm(y~., data=dat, kernel="linear", cost=1e5)
+summary(svmfit)
+plot(svmfit, dat)
+```
+
+We can see from above that no training errors were made and 3 support vectors were used. We can also see that the decision boundary has a very narrow margin, which will likely perform poorly on test data. We will now try a smaller value of cost:
+
+```{r, echo=TRUE}
+svmfit <- svm(y~., data=dat, kernel="linear", cost=1)
+summary(svmfit)
+plot(svmfit, dat)
+```
+
+We can see from above that this lowered cost of 1 gives us a larger margin. We also only have 1 misclassified observation. This wider margin will allow our model to perform better on test data. 
+
+## Support Vector Machine 
+
+In order to fit a support vector machine with a polynomial kernel we will use the kernel="polynomial" parameter. 
+
+We will first generate some data with a nonlinear class boundary: 
+
+```{r, echo=TRUE}
+# reproducibility
+set.seed(24)
+# create matrix
+x <- matrix(rnorm(200*2), ncol=2)
+x[1:100,] = x[1:100,]+2
+x[101:150,]=x[101:150,]-2
+y<-c(rep(1, 150), rep(2, 50))
+dat = data.frame(x=x, y=as.factor(y))
+plot(x, col=y)
+```
+
+
+We can see from above that the data is very much nonlinear. We will now split the data into training and test groups, and the fit using the svm() function with a radial kernel and gamma = 1:
+
+```{r, echo=TRUE}
+train <- sample(200, 100)
+svmfit <- svm(y~., data=dat[train,], kernel="radial", gamma=1, cost=1)
+plot(svmfit, dat[train,])
+```
+
+Our plot above shows that the data has a very nonlinear boundary. We can obtain more information:
+
+```{r, echo=TRUE}
+summary(svmfit)
+```
+
+We have a lot of training errors as shown above. We can increase the value of cost, which will reduce the number of training errors. The expense of this move means that the more irregular training boundary will make the model at risk of overfitting the data. 
+
+```{r, echo=TRUE}
+svmfit <- svm(y~., data=dat[train,], kernel="radial", gamma=1, cost=1e5)
+plot(svmfit, dat[train,])
+```
+
+That looks pretty bad. Lets perform cross validation using tune to select the best values for gamma and cost. 
+
+```{r, echo=TRUE}
+# reproducibility
+set.seed(32)
+# tune
+tune.out <- tune(svm, y~., data=dat[train,], kernel="radial", ranges = list(cost=c(0.1, 1, 10, 100, 1000), gamma=c(0.5, 1, 2, 3, 4)))
+# summary
+summary(tune.out)
+```
+
+We can see from above that the best performance comes from a cost parameter of 1000 and a gamma parameter of 0.5. 
+
+```{r, echo=TRUE}
+table(true=dat[-train, "y"], pred=predict(tune.out$best.model, newdata=dat[-train,]))
+```
+
+We can see above that we have a ratio of 90:10, or 90% correct classification. 
+
+## SVM with Multiple Classes
+
+If the response is a factor containing more than 2 levels, than the svm() function will perform multi class classification using the one versus one approach. We will explore that by generating a third class of observations.
+
+```{r, echo=TRUE}
+# reproducibility
+set.seed(40)
+x <- rbind(x, matrix(rnorm(50*2), ncol=2))
+y <- c(y, rep(0, 50))
+x[y==0,2]=x[y==0,2]+2
+dat=data.frame(x=x, y=as.factor(y))
+par(mfrow=c(1,1))
+plot(x, col=(y+1))
+```
+
+We now fit a SVM to the data:
+
+```{r, echo=TRUE}
+svmfit <- svm(y~., data=dat, kernel="radial", cost=10, gamma=1)
+plot(svmfit, dat)
+```
+
+## Application to Gene Expression Data
+
+We will now examine the Khan data set, which consists of a number of tissue samples corresponding to four distinct types of small round blue cell tumors. 
+
+```{r, echo=TRUE}
+names(Khan)
+dim(Khan$xtrain)
+dim(Khan$xtest)
+length(Khan$ytrain)
+length(Khan$ytest)
+```
+
+This data consists of expression measuremenets for 2308 genes. The training and test data sets consist of 63 and 20 observations respectively. 
+
+We will use a support vector approach to predict cancer subtype using gene expression measurements. In this data set there are a very large number of features relative to the number of observations. This suggests that we should use a linear kernel, because the additional flexibility that will result from using a polynomial or radial kernel is unnecessary.
+ 
+```{r, echo=TRUE}
+dat = data.frame(x=Khan$xtrain, y=as.factor(Khan$ytrain))
+out = svm(y~., data=dat, kernel="linear", cost=10)
+summary(out)
+
+table(out$fitted, dat$y)
+```
+
+We see that there are no training errors. The large number of variables relative to the number of observations implies that it is easy to find hyperplanes that fully seperate the classes. Now we will check the performance on a test set:
+
+```{r, echo=TRUE}
+dat.te = data.frame(x=Khan$xtest, y=as.factor(Khan$ytest))
+pred.te = predict(out, newdata=dat.te)
+table(pred.te, dat.te$y)
+```
+
+We only get 2 errors.

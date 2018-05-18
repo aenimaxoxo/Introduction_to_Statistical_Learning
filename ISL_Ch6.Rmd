@@ -1,0 +1,462 @@
+---
+title: "ISL_Ch6_Lab"
+author: "Michael Rose"
+date: "October 1, 2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(ISLR)
+library(leaps)
+library(glmnet)
+library(pls)
+```
+
+Our data is Hitters, which is a dataset of baseball players. 
+
+# Best Subset Selection
+
+```{r, echo=TRUE}
+fix(Hitters)
+
+# look at parameters
+names(Hitters)
+
+# check dimensions
+dim(Hitters)
+
+# see NAs 
+sum(is.na(Hitters$Salary))
+```
+
+Here we have a 20 parameter data set with 322 data points. We also have 59 players with missing salaries. Since we wish to predict the salaries of players, we are going to remove our NA points from the data set.
+
+```{r, echo=TRUE}
+# remove NA
+Hitters <- na.omit(Hitters)
+
+# new dimensions
+dim(Hitters)
+
+# New NA total
+sum(is.na(Hitters))
+```
+
+The regsubsets() functions performs best subset selection by identifying the best model that contains a given number of predictors, where best is quantified using RSS. 
+
+```{r, echo=TRUE}
+# fit best subsets model
+regfit_full <- regsubsets( Hitters$Salary ~., Hitters)
+
+# summary
+summary(regfit_full)
+```
+
+By default, regsubsets only reports results up to an 8 variable model. We can change that paraemeter with the nvmax option 
+
+```{r, echo=TRUE}
+# re fit reg subsets with max variables set to 19
+regfit_full <- regsubsets(Hitters$Salary ~., data=Hitters, nvmax=19)
+# return summary
+reg_summary <- summary(regfit_full)
+# shows what summary returns 
+names(reg_summary)
+# show summary r^2^ statistics
+plot(reg_summary$rsq)
+```
+
+From the above, we can see that the R^2^ variable increases monotonically as more variables are added to our model. We can decide which model to select by comparing RSS, adjusted R^2^, Cp, and BIC for all of the model subsets at once. 
+
+## Comparison of Fit Statistics
+
+```{r, echo=TRUE}
+# set multi graph layout
+par(mfrow=c(2,2))
+#plot
+# RSS
+plot(reg_summary$rss, xlab="Number of Variables", ylab="RSS")
+points(which.min(reg_summary$rss), reg_summary$rss[which.min(reg_summary$rss)], col="red", cex=2, pch=20)
+# Adjusted R^2^
+plot(reg_summary$adjr2, xlab= "Number of Variables", ylab="Adjusted R^2")
+
+#color the max red
+points(which.max(reg_summary$adjr2), reg_summary$adjr2[11], col="red", cex=2, pch=20)
+
+# do it again for Cp
+plot(reg_summary$cp, xlab="Number of Variables", ylab = "Cp")
+# We want to minimize Cp, as opposed to R^2, which we wanted to maximize
+# Color the min Cp
+points(which.min(reg_summary$cp), reg_summary$cp[which.min(reg_summary$cp)], col="red", cex=2, pch=20)
+
+# BIC 
+plot(reg_summary$bic, xlab = "Number of Variables", ylab = "BIC")
+points(which.min(reg_summary$bic), reg_summary$bic[which.min(reg_summary$bic)], col="red", cex=2, pch=20)
+```
+
+
+We can use the regsubsets() function's built in plot command to display the selected variables for the best model with a given number of predictors
+
+```{r, echo=TRUE}
+#par(mfrow=c(2,2))
+#par(mfrow=c(2,2))
+plot(regfit_full, scale="r2")
+plot(regfit_full, scale="adjr2")
+plot(regfit_full, scale="Cp")
+plot(regfit_full, scale="bic")
+
+```
+
+We can see from the plots above what the best subsets are for each fit statistic.
+
+```{r, echo=TRUE}
+# coef to see coefficients with this specific model
+# Best BIC model
+coef(regfit_full, 6)
+```
+
+## Forward and Backware Stepwise Selection
+
+```{r, echo=TRUE}
+# method = "forward" parameter sets regsubsets from best subsets to forward stepwise selection
+regfit_forward <- regsubsets(Hitters$Salary ~., data=Hitters, nvmax=19, method="forward")
+summary(regfit_forward)
+
+# again for backward selection
+regfit_backward <- regsubsets(Hitters$Salary ~., data=Hitters, nvmax=19, method="backward")
+summary(regfit_backward)
+```
+
+Let's compare the best 7 variable models for best subsets, forward stepwise and backward stepwise
+```{r, echo=TRUE}
+# best subsets
+coef(regfit_full, 7)
+
+# forward stepwise
+coef(regfit_forward, 7)
+
+# backward stepwise
+coef(regfit_backward, 7)
+```
+
+As we can see above, they all chose very different models as the best 7 variable model. 
+
+## Model Selection using the Validation Set Approach and Cross Validation
+
+Instead of adjusted R^2^, Cp, or BIC, we will choose a model using the validation set and cross validation approaches. 
+
+We begin by splitting the observations into a training set and a test set. 
+```{r, echo=TRUE}
+# for reproducibility
+set.seed(1)
+
+# vector of elements equal to TRUE if the corresponding observation is in the training set and FALSE otherwise. 
+
+train <- sample(c(TRUE,FALSE), nrow(Hitters), rep=TRUE)
+
+# vector of elements equal to TRUE if the corresponding observationn is in the test set and false otherwise
+test <- (!train)
+
+# apply regsubsets to the training set to perform best subset selection on only the training data
+regfit_cv <- regsubsets(Salary~.,data=Hitters[train ,],
+nvmax =19)
+```
+
+Now we can test our model: 
+
+```{r, echo=TRUE}
+# Create a model matrix from the test data. The model.matrix() function is used for building an X matrix from the data. 
+test_matrix <- model.matrix(Salary~., data=Hitters[test,])
+
+# loop through all the best models of size i, put them in the test model matrix and compute the test MSE
+# create errors vector
+val.errors =rep(NA ,19)
+for(i in 1:19){
+  coefi=coef(regfit_cv ,id=i)
+  pred=test_matrix[,names(coefi)]%*% coefi
+  val.errors[i]= mean((Hitters$Salary[test]-pred)^2)
+}
+
+#find the best fit by checking the minimum element of our errors vector
+#which.min(val.errors)
+# return the best model
+coef(regfit_cv, which.min(val.errors))
+
+```
+
+We can write our own predict method with what we did above: 
+
+```{r, echo=TRUE}
+# abstraction of what we did above
+predict.regsubsets <- function(object, newdata, id, ...){
+  form <- as.formula(object$call[[2]])
+  mat <- model.matrix(form, newdata)
+  coefi <- coef(object, id=id)
+  xvars <- names(coefi)
+  mat[, xvars]%*%coefi
+}
+
+```
+
+Our cross validated model above returned a 10 variable model from the training data set. Now we can compare our cross validated subset model to a full data subset model to see which returns a better model. We can also check to see if they return the same model. 
+
+```{r, echo=TRUE}
+regfit_best <- regsubsets(Salary~., data=Hitters, nvmax=19)
+coef(regfit_best, 10)
+```
+
+We see from above that our full data model has quite different coefficients and a different set of variables than our training set model had. 
+
+We now try to choose among the models of different sizes using cross validation. This is an involved process because we perform best subset selection within each of the k training sets. 
+
+```{r, echo=TRUE}
+# set folds
+k <- 10
+# for reproducibility
+set.seed(1)
+# make k-fold cv model
+folds <- sample(1:k, nrow(Hitters), replace=TRUE)
+# make a matrix of errors
+cv_error_matrix <- matrix(NA, k, 19, dimnames = list(NULL, paste(1:19)))
+
+# for loop that performs cross validation. This gives us a 10*19 matrix of which the (i, j)th element corresponds to the test MSE for the ith cross validation fold for the best j-variable model 
+for (j in 1:k){
+  best_fit <- regsubsets(Salary~., data=Hitters[folds != j,], nvmax=19)
+  for (i in 1:19){
+    pred <- predict(best_fit, Hitters[folds == j,], id=i)
+    cv_error_matrix[j, i] <- mean((Hitters$Salary[folds==j]-pred)^2)
+  }
+}
+
+# average over the columns of the matrix to obtain a vecotr for which the jth element is the cross validation error for the j-variable model
+mean_cv_errors <- apply(cv_error_matrix, 2, mean)
+which.min(mean_cv_errors)
+```
+
+We see that the 11 variable model has the least error on the test set
+
+```{r, echo=TRUE}
+par(mfrow=c(1,1))
+plot(mean_cv_errors, type='b')
+
+# perform best subset selection on the full data set in order to obtain the 11 variable model
+reg_best <- regsubsets(Salary~., data = Hitters, nvmax=19)
+coef(reg_best, 11)
+```
+
+# Ridge Regression and the Lasso
+
+glmnet() will be used to perform ridge regression and the lasso. It can only take in numerical, quantitative inputs. We must pass in x and y matrices. Model.matrix is good for these functions because it automatically transforms any qualitative variables into dummy variables.
+
+```{r, echo=TRUE}
+# Create x and y matrices to pass into model-fitting function
+xomg <- model.matrix(Salary~., Hitters)[,-1]
+yomg <- Hitters$Salary
+```
+
+## Ridge Regression
+
+The glmnet() function has an alpha argument that determines what type of model is fit. If alpha=0 then a ridge regression is fit. If alpha = 1, then a lasso model is fit. By default, ,the glmnet() function standardizes the variables, so we don't have to worry about standardization during ridge regression. 
+
+```{r, echo=TRUE}
+# fit a ridge regression model
+# create a grid of lambda values ranging from lambda = 10^10 to lambda = 10^-2, essentially covering the full range of scenarios from the null model containing only the intercept to the least squares regression 
+grid <- 10^seq(10, -2, length=100)
+# plug in x, y matrices, set to RR, and pass in lambda grid
+ridge.mod <- glmnet(xomg, yomg, alpha=0, lambda=grid)
+# check dimensions of ridge regression coefficients
+dim(coef(ridge.mod))
+```
+We expect the coefficient estimates to be much smaller in terms of l2 norm when a large value of lambda is used, as compared to when a small value of lambda is used. Lets look at some coefficients to see the difference: 
+
+```{r, echo=TRUE}
+# lambda value 11497.5
+ridge.mod$lambda[50]
+
+# coefficients on that lambda
+coef(ridge.mod)[,50]
+
+# lambda value 705
+ridge.mod$lambda[60]
+
+# coefficients on that lambda for comparison
+coef(ridge.mod)[,60]
+```
+
+Note the much large coefficients when looking at the smaller lambda value.
+
+We can use predict to obtain the ridge regression coefficients for a specific value of lambda. Lets check out lambda = 50.
+
+```{r, echo=TRUE}
+predict(ridge.mod, s=50, type="coefficients")[1:20,]
+```
+
+We now split the samples into a training set and a test set in order to estimate the test error of ridge regression and the lasso. 
+
+```{r, echo=TRUE}
+# reproducibility
+set.seed(1)
+
+# training set
+train <- sample(1:nrow(xomg), nrow(xomg)/2)
+# test set
+test <- (-train)
+y_test <- yomg[test]
+# fit a RR model on the training set and evaluate its MSE on the test set, using lambda = 4. This time we get predictions for a test set by replacing coefficients with the newx argument
+ridge.mod.2 <- glmnet (xomg[train,],yomg[train],alpha=0, lambda=grid ,
+thresh=1e-12)
+ridge.pred <- predict (ridge.mod.2,s=4, newx=xomg[test,])
+mean((ridge.pred - y_test)^2)
+```
+
+The test MSE is 101037. Note that if we fit a model with just an intercept, or a model with a very high lambda value, we would get a higher MSE.
+
+```{r, echo=TRUE}
+# just intercept
+mean((mean(yomg[train])-y_test)^2)
+
+## Very large lambda
+ridge.pred.2 <- predict(ridge.mod.2, s=1e10, newx=xomg[test,])
+mean((ridge.pred.2 - y_test)^2)
+```
+
+We now check whether there is any benefit to performing ridge regression with lambda = 4 instread of just performing least squares regression. Recall that least squares regression is equivalent to ridge regression at lambda = 0. 
+
+```{r, echo=TRUE}
+ridge.pred.3 <- predict(ridge.mod.2, s=0, newx=xomg[test,])
+mean((ridge.pred.3 - y_test)^2)
+
+lm_ridge <- lm(yomg~xomg, subset=train)
+predict(ridge.mod.2, s=0, type="coefficients")[1:20,]
+
+#summary(lm_ridge)
+mean(lm_ridge$residuals^2)
+```
+
+Our least squares model gives a MSE of 103774.1
+
+Instead of an arbitrary value of lambda, such as 4 we can use cross validation to select the best value of lambda. We will use the cv.glmnet() function. This function performs 10-fold cross validation by default. 
+
+```{r, echo=TRUE}
+# for reproducibility
+set.seed(1)
+# cv function
+cv.out =cv.glmnet (xomg[train,],yomg[train],alpha=0)
+plot(cv.out)
+bestlam=cv.out$lambda.min
+bestlam
+# test MSE of our best lambda value? 
+ridge.pred <- predict(ridge.mod.2,s=bestlam ,newx=xomg[test,])
+mean((ridge.pred - y_test)^2)
+```
+
+As we can see, our MSE has reduced by a large amount when we did cross validated our complete parameters model. 
+
+Now lets refit our regression model on the full data set, using the value of lambda chosen by cross validation, and examine coefficient estimates. 
+
+```{r, echo=TRUE}
+out <- glmnet(xomg, yomg, alpha=0)
+predict(out, type="coefficients", s=bestlam)[1:20,]
+```
+
+As expected, since we did Ridge Regression none of the coefficients are 0.
+
+## The Lasso
+
+We saw that ridge regression with a good lambda value will outperform least squares regression. Now we will try a lasso regression. 
+
+```{r, echo=TRUE}
+lasso.mod <- glmnet(xomg[train,], yomg[train], alpha=1, lambda=grid)
+plot(lasso.mod)
+```
+
+From the plot above, we can see that our tuning parameter makes some of the coefficients drop to 0. 
+
+We now perform cross validation to compute the associated test error
+
+```{r, echo=TRUE}
+# reproducibility
+set.seed(1)
+# cv lasso
+cv.out <- cv.glmnet(xomg[train,], yomg[train], alpha=1)
+plot(cv.out)
+bestlam <- cv.out$lambda.min
+lasso.pred <- predict(lasso.mod, s=bestlam, newx=xomg[test,])
+mean((lasso.pred - y_test)^2)
+```
+
+Our lasso model has a lower MSE than our least squares model, but a higher MSE than our Ridge Regression model that used a lambda value provided by cross validation.  
+
+Our lasso model has an advantage over our ridge regression model in that the resulting coefficient estimates are sparse. Of our 19 coefficients, 12 of them have dropped to 0. As a result, our model only contains 7 variables and is a lot simpler than our 19 coefficient ridge regression model. 
+
+```{r, echo=TRUE}
+out=glmnet(xomg,yomg,alpha =1, lambda =grid)
+lasso.coef=predict(out,type="coefficients",s=bestlam )[1:20,]
+lasso.coef
+```
+
+# Principle Component Regression and Partial Least Squares Regression
+
+```{r, echo=TRUE}
+# reproducibility
+set.seed(2)
+
+# Principle Components Regression. scale=TRUE standardizes all the variables. validation="CV" causes pcr() to compute the 10-fold cross validation error for each possible value of M, the number of principal components used. 
+pcr_fit <- pcr(Salary~., data=Hitters, scale=TRUE, validation="CV")
+
+# pcr reports the root mean squared error. For comparison to our original MSE, we must square it! 
+summary(pcr_fit)
+
+# plot it! valtype = msep means that the cross validated mean squared error will be plotted. 
+validationplot(pcr_fit, val.type = "MSEP")
+```
+From the plot above, we see the MSE is minimized when we have either 16 principal components, or 1 principal component. Since 1 principal component has a roughly equivalent MSE, this suggests that a model using a small number of principal components may suffice. 
+
+Lets perform PCR on a training set and evaluate its test set performance: 
+
+```{r, echo=TRUE}
+# reproducibility
+set.seed(1)
+# pcr fit
+pcr.fit <- pcr(Salary~., data=Hitters, subset=train, scale=TRUE, validation="CV")
+# plot
+validationplot(pcr.fit, val.type = "MSEP")
+# compute test MSE
+pcr.pred <- predict(pcr.fit, xomg[test,], ncomp = 7)
+mean((pcr.pred - y_test)^2)
+```
+We get a test MSE of 96556, which is competitive with our results from ridge regression and the lasso. However, as a result of the way PCR is implemented, the final model is more difficult to interpret because it does not perform any kind of variable selection or even directly produce coefficient estimates.
+
+Lets fit PCR on the full data set. 
+
+```{r, echo=TRUE}
+pcr.fit <- pcr(yomg~xomg, scale=TRUE, ncomp=7)
+summary(pcr.fit)
+```
+We now find that our MSE is minimized when we have a model with 7 Principal Components. 
+
+## Partial Least Squares
+
+```{r, echo=TRUE}
+# reproducibility
+set.seed(1)
+
+# PLS regression model
+pls.fit <- plsr(Salary~., data=Hitters, subset=train, scale=TRUE, validation="CV")
+# summary
+summary(pls.fit)
+# plot 
+validationplot(pls.fit, val.type = "MSEP")
+```
+
+We can see from the plot above that our MSE is minimized when we have 2 Partial Least Squares components. 
+
+Lets perform PLS using the full data set. 
+
+```{r, echo=TRUE}
+pls.fit <- plsr(Salary~., data=Hitters, scale=TRUE, ncomp=2)
+summary(pls.fit)
+
+```
+
+Notice that the percentage of variance in Salary that the 2 component PLS fit explains (46.4%) is almost as much as that explained using the final 7 component model PCR fit (46.69%). This is because PCR only attempts to maximize the amount of variance explained in the predictors, while PLS searches for directions that explain variance in both the predictors and the response. 

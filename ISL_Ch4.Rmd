@@ -1,0 +1,408 @@
+---
+title: "ISL_Ch4_Lab"
+author: "Michael Rose"
+date: "September 19, 2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(ISLR)
+library(MASS)
+library(class)
+```
+
+This RMarkdown document contains logistic regression and linear discriminant analysis on a data set of the S&P 500 stock index ocer 1250 days. This data was taken from the beginning of 2001 until the end of 2005.
+
+The percentage returns for each of the five previous trading days are recorded with the variables Lag1 through Lag5. 
+
+Volume records the number of shares traded on the previous day (in billions)
+
+Today - % return on the date in question
+
+Direction - Whether the market was up or down on this date
+
+```{r, echo=TRUE}
+
+names(Smarket)
+
+dim(Smarket)
+
+summary(Smarket)
+
+#cor creates a matrix that contains all of the pairwise correlations among the predictors in a data set. 
+cor(Smarket[, -9])
+```
+
+From above, we see that the only substantial correlation seems to be between Year and Volume.
+
+```{r, echo=TRUE}
+attach(Smarket)
+plot(Volume)
+```
+
+The volume graph above shows us that the average number of shares traded daily has increased from 2001 to 2005. 
+
+## Logistic Regression
+
+We will try to predict the direction that our model will take using Lag1 through Lag5 and Volume. 
+
+```{r, echo=TRUE}
+# glm fits a generalized linear model
+# family=binomial makes R run a log reg instead of some other linear model
+glm_1 <- glm(Direction ~ Lag1 + Lag2 + Lag3 + Lag4 + Lag5 + Volume, data=Smarket, family=binomial)
+
+summary(glm_1)
+
+```
+
+As suggested by our p-values for each Lag parameters, there are no values which are significant. Our most significant is Lag1, which a p-value of 0.145 (which is still quite high). The negative coefficient on our Lag1 variable shows that a positive return yesterday would leave us more likely to have a negative return today. Given the high p-value, there is no discernible association between the Lag1 parameter and our return today. 
+
+```{r, echo=TRUE}
+#coef accesses the coefficients for the fitted model
+coef(glm_1)
+
+#we can also access the coefficients using our summary function, and the summary functions accessor summary$coef will give us the p-values for our coefficients
+summary(glm_1)
+summary(glm_1)$coef[, 4]
+```
+
+We can look at the probabilities of the market going up over time
+
+```{r, echo=TRUE}
+# create a predict function
+# predict predicts the probability that the market will go up given the values of the predictors. The type=response option tells R to output probabilities of the form P(Y=1|X). If no data set is supplied to the predict() function then it will use the probabilities that were computed for the training data to fit the logistic regression model. 
+
+glm_probs <- predict(glm_1, type = "response")
+
+glm_probs[1:10]
+
+# contrasts() functuon indicates that R has created a dummy variable with a 1 for up
+
+contrasts(Direction)
+```
+
+In order to predict whether the market will move up or go down on a particular day we can convert these predicted probabilities into class labels, Up or Down. 
+
+```{r, echo=TRUE}
+# create a vector of class predictions based on whether the probability of a market increase is greater or less than 0.5
+
+#create a vector of 1250 down elements
+glm.pred <- rep("Down", 1250)
+# set probabilities greater than 0.5 to up
+glm.pred[glm_probs > 0.5] = "Up"
+
+#view our data with confusion matrix
+glm_table <- table(glm.pred, Direction)
+glm_table
+
+# calculate error
+glm_error <- ((457 + 141)/1250)
+glm_error
+
+# show mean
+mean(glm.pred == Direction)
+```
+
+From our mean above, we can see that our Logistic Regression model correctly predicted the direction of the market 52.16% of the time. We also had a training error rate of 47.84%
+
+Our training error rate only accounts for the training data and not for the test data. As a result, our training error rate is often overly optimistic. 
+
+To assess the performance of the logistic regression model better, we can split the data into training and test groups. We can train our model on the training data and test it on the test data. This will yeild a more realistic error rate as it will show us how it performs on data that is unknown to the model as opposed to data on which the model was fitted. 
+
+```{r, echo=TRUE}
+# set training data set for years < 2005
+train_set <- (Year<2005)
+
+# set SMarket data to all the data points not in our training set
+Smarket_2005 <- Smarket[!train_set,]
+
+# check dimensions of updated Smarket data set
+dim(Smarket_2005)
+
+# create new Direction column that does not include non-2005 values
+Direction_2005 <- Direction[!train_set]
+
+# fit a logistic regression model using the subset of observations that correspond to dates before 2005. This is our training set
+glm_2 <- glm(Direction~Lag1+Lag2+Lag3+Lag4+Lag5+Volume, data = Smarket, family = binomial, subset = train_set)
+
+# Fit a model to predict our 2005 values using our model trained on our training set
+glm_probs_2 <- predict(glm_2, Smarket_2005, type="response")
+
+# Computer predictions
+glm.pred_2 <- rep("Down", 252)
+glm.pred_2[glm_probs_2 > 0.5] = "Up"
+glm_table_2 <- table(glm.pred_2, Direction_2005)
+glm_table_2
+
+# Check Error rate
+glm_error_2 <- ((34+97)/252)
+glm_error_2
+
+# Show mean
+mean(glm.pred_2 == Direction_2005)
+```
+
+From the above data, it seems that our predictive effectiveness has actually gone down when dealing with real, unknown data. 
+
+In our original logistic regression model Lag2 had a reasonable amount of predictive power. If we remove some variables that do not appear to be helpful, perhaps we can obtain a more effective model. 
+
+```{r, echo=TRUE}
+glm_3 <- glm(Direction~Lag1+Lag2, data = Smarket, family = binomial, subset= train_set)
+
+glm_probs_3 <- predict(glm_3, Smarket_2005, type="response")
+glm.pred_3 <- rep("Down", 252)
+glm.pred_3[glm_probs_3 > 0.5] = "Up"
+glm_table_3 <- table(glm.pred_3, Direction_2005)
+glm_table_3
+mean(glm.pred_3 == Direction_2005)
+# Error rate is also the complement in this case
+mean(glm.pred_3 != Direction_2005)
+
+```
+
+Our new results indicate that 56% of the daily movements have been correctly predicted by our new model. 
+
+Suppose we wanted to predict returns associated with a particular value of Lag1 and Lag2.
+
+```{r, echo=TRUE}
+glm_pred_4 <- predict(glm_3, newdata = data.frame(Lag1=c(1.2, 1.5), Lag2=c(1.1,-0.8)), type="response")
+glm_pred_4
+```
+
+This shows when Lag1 and Lag2 equal 1.2 and 1.1, and when they equal 1.5 and -0.8 respectively
+
+## Linear Discriminant Analysis
+
+```{r, echo=TRUE}
+# create a new Linear Discriminant Analysis model
+lda_1 <- lda(Direction ~ Lag1 + Lag2, data=Smarket , subset=train_set)
+lda_1
+plot(lda_1)
+```
+From our data above, we can see the following: 
+
+### Prior Probabilities of Groups
+
+* 49.2% of the training observations correspond to days that the market went down
+* 50.8% of the training observations correspond to days that the market went up 
+
+### Group Means
+
+* These are the average of each predictor within each class
+* When the last day was negative the next day is likely to be positive
+* When the last day was positive the next day is likely to be negative
+* When the last 2 days were negative there is a tendency for the next day to be positive 
+* When the last 2 days were positive there is a tendency for the next day to be negative
+
+### Coefficients of Linear Discriminants
+
+These form the linear combination of lag1 and lag2 that form the LDA decision rule. 
+
+```
+If -0.642*Lag1 - 0.514*Lag2 is large the LDA classifier will predict a market increase. If it is small it will predict a market decline. 
+```
+
+```{r, echo=TRUE}
+# Predict returns a list with 3 elements: 
+# Class: contains LDA predictions about the movement of the market
+# Posterior: Matrix whose kth column contains the posterior probability that the corresponding observation belongs to the kth class
+# X contains the linear discriminants
+
+lda_pred <- predict(lda_1, Smarket_2005)
+names(lda_pred)
+
+lda_class <- lda_pred$class
+lda_table <- table(lda_class, Direction_2005)
+lda_table
+mean(lda_class == Direction_2005)
+```
+
+From our prediction above, we can see our LDA model is equivalent to our logistic regression :
+
+```{r, echo=TRUE}
+mean(glm.pred_3 == Direction_2005)
+```
+
+What if we changed the threshold of the posterior probabilities ? When we look at the thresholds at 50% we get the predictions from our LDA_Class
+
+```{r, echo=TRUE}
+sum(lda_pred$posterior[,1]>=0.5)
+sum(lda_pred$posterior[,1] <0.5)
+```
+
+```{r, echo=TRUE}
+lda_pred$posterior[1:20, 1]
+lda_class[1:20]
+```
+
+If we change the threshold to 0.9, making the classifier predict up only when its very certain: 
+
+```{r, echo=TRUE}
+sum(lda_pred$posterior[,1]>.9)
+```
+
+We see that no days in 2005 meet that requirement. The greatest posterior probability of decrease in all of 2005 was 52.02%
+
+# Quadratic Discriminant Analysis
+
+```{r, echo=TRUE}
+qda_1 <- qda(Direction~Lag1+Lag2, data=Smarket, subset=train_set)
+qda_1
+```
+
+We can see from the above data that we get approximately the same results from quadratic discriminant analysis that we got from linear discriminant analysis and logistic regression.
+
+```{r, echo=TRUE}
+qda_class <- predict(qda_1, Smarket_2005)$class
+qda_class_table <- table(qda_class, Direction_2005)
+qda_class_table
+
+mean(qda_class == Direction_2005)
+```
+
+Surprisingly we get almost 60% accuracy when dealing with the QDA predictions. This model was trained on the years < 2005 and tested on the 2005 data set. 
+
+When trained on the training set it indicated that the output would be similar to LogReg and LDA. When actually ran on the test data, it performed roughly 5% better than both LDA and LogReg. 
+
+# K-Nearest Neighbors
+
+The K-Nearest Neighbors function requires 4 inputs: 
+* A) A matrix containing the predictors associated with the training data
+* B) A matrix containing the predictors associated with the data for which we wish to make predictions
+* C) A vector containing the class labels for the training observations
+* D) A value for K, the number of nearest neighbors to be used by the classifier
+
+```{r, echo=TRUE}
+# cbind : column bind, binds lag1 and lag2 together into two matrixes, one for training and one for test
+# A 
+train_x <- cbind(Lag1, Lag2)[train_set, ]
+
+#B
+test_x <- cbind(Lag1, Lag2)[!train_set,]
+
+#C
+train_direct <- Direction[train_set]
+
+#Set seed in case of several observations are tied as nearest neighbors. When this happens, R randomly chooses. As such, for reproducibility we must set a seed
+set.seed(1)
+
+# predict model
+knn_pred <- knn(train_x, test_x, train_direct, k=1)
+knn_table <- table(knn_pred, Direction_2005)
+knn_table
+
+mean(knn_pred == Direction_2005)
+```
+
+From our mean above, we can see that our KNN model predicts the observations correctly 50% of the time (basically guesses). This is likely due to our KNN smoothness being set to 1, which is provided much too granular and flexible a fit. 
+
+```{r, echo}
+knn_pred_2 <- knn(train_x, test_x, train_direct, k=3)
+knn_table_2 <- table(knn_pred_2, Direction_2005)
+knn_table_2
+mean(knn_pred_2 == Direction_2005)
+```
+
+Our results have improved very slightly. Quadratic Linear Analysis is still the best of all the models tried.
+
+
+# KNN in a different context 
+
+```{r, echo=TRUE}
+dim(Caravan)
+
+attach(Caravan)
+summary(Purchase)
+```
+
+A shortcoming of KNN is that it takes into account the scale of the variables. As it identifies the observations nearest to it, variables with a large sale will have a much larger effect on the distance between the observations. As such, it is important to standardize the variables when working with KNN. 
+
+```{r, echo=TRUE}
+# Scale standardizes the variables
+#excluding column 86 which is a qualitative variable Purchase
+standardized_x <- scale(Caravan[,-86])
+
+#compare
+var(Caravan[,1])
+var(Caravan[,2])
+var(standardized_x[,1])
+var(standardized_x[,2])
+```
+Every column of standardized_x has a standard deviation of 1 and a mean of 0 
+
+```{r, echo=TRUE}
+#split observations up. 
+# test set is the first 1000 observations
+test <- 1:1000
+# training set is the remaining observations
+train_x <- standardized_x[-test,]
+test_x <- standardized_x[test,]
+
+# create a vector of the qualitative variable Purchase for test and training sets
+train_y <- Purchase[-test]
+test_y <- Purchase[test]
+
+# set seed because of KNN ties
+set.seed(1)
+knn_pred_3 <- knn(train_x, test_x, train_y, k=1)
+
+# Error rate on the 1000 test observations. Since only 6% of customers purchased insurance, we could get the error rate down to 6% by always predicting no, so 12% is pretty bad
+mean(test_y != knn_pred_3)
+
+# average number of Yeses 
+mean(test_y != "No")
+```
+
+```{r, echo=TRUE}
+knn_table_3 <- table(knn_pred_3, test_y)
+knn_table_3
+9 / (68+9)
+```
+
+Our KNN k=1 model predicts that someone will buy insurance with a rate of 11.7%, or roughly double the random guess. Lets try refining our KNN surface with different smoothness levels.
+
+### K=3
+
+```{r, echo=TRUE}
+knn_pred_4 <- knn(train_x, test_x, train_y, k=3)
+knn_table_4 <- table(knn_pred_4, test_y)
+knn_table_4
+5 / 26
+```
+
+Prediction success rate of 19.23%
+
+### K=5
+
+```{r, echo=TRUE}
+knn_pred_5 <- knn(train_x, test_x, train_y, k=5)
+knn_table_5 <- table(knn_pred_5, test_y)
+knn_table_5
+4 / 15
+```
+
+Prediction success rate of 26.7%
+
+## Comparison of KNN to Logistic Regression for Caravan Data
+
+```{r, echo=TRUE}
+glm_4 <- glm(Purchase ~ ., data=Caravan, family = binomial, subset = -test)
+glm_probs_4 <- predict(glm_4, Caravan[test,], type="response")
+glm_pred_4 <- rep("No", 1000)
+glm_pred_4[glm_probs_4 > 0.5] = "Yes"
+glm_table_4 <- table(glm_pred_4, test_y)
+glm_table_4
+```
+
+Only 7 are predicted to buy insurance, and we are wrong about all of them. Lets try again with a smaller cutoff. 
+
+```{r, echo=TRUE}
+glm_pred_5 <- rep("No", 1000)
+glm_pred_5[glm_probs_4 > 0.25] = "Yes"
+glm_table_5 <- table(glm_pred_5, test_y)
+glm_table_5 
+11 / 33
+```
+
+We get a predicted success rate of 33% ! 

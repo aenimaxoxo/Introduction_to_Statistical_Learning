@@ -1,0 +1,162 @@
+---
+title: "ISL_Ch5_Lab"
+author: "Michael Rose"
+date: "September 25, 2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(ISLR)
+```
+
+## ISL Chapter 5 Lab
+
+```{r, echo=TRUE}
+# set seed to deal with randomness and allow for reproducibility
+set.seed(1)
+
+# split sample into 2 halves
+train=sample(392,196)
+
+# use train subset to create a linear regression fit 
+lm_fit <- lm(mpg~horsepower, data=Auto, subset=train)
+
+attach(Auto)
+
+# calculate mean squared error of the 196 observations in the validation set. Use predict to estimate the response for all 392 observations 
+mean_fit <- mean((mpg -predict (lm_fit ,Auto))[-train ]^2)
+mean_fit
+```
+
+From above we see that the Mean Squared Error for the linear regression fit is 26.14. We can estimate the test error for the polynomial and cubic regressions 
+
+```{r, echo=TRUE}
+lm_fit_poly <- lm(mpg~poly(horsepower, 2), data=Auto, subset=train)
+mean_poly <- mean((mpg-predict(lm_fit_poly, Auto))[-train]^2)
+mean_poly
+
+lm_poly_cubic <- lm(mpg~poly(horsepower, 3), data=Auto, subset = train)
+mean_cubic <- mean((mpg-predict(lm_poly_cubic, Auto))[-train]^2)
+mean_cubic
+```
+
+From above, we see that the MSE for the quadratic model is 19.82 and the MSE for the cubic model is 19.78
+
+If we choose a different training set, we will obtain different errors on the validation set
+
+```{r, echo=TRUE}
+#set seed
+set.seed(2)
+# set new training and validation set
+train2 <- sample(392, 196)
+# create linear model
+lm_fit_2 <- lm(mpg~horsepower, subset=train2)
+# calc mean
+mean_linreg_2 <- mean((mpg-predict(lm_fit_2, Auto))[-train2]^2)
+mean_linreg_2
+# linreg with quadratic term
+lm_fit_quad <- lm(mpg~poly(horsepower, 2), data=Auto, subset=train2)
+mean_quad <- ((mpg-predict(lm_fit_quad, Auto))[-train2]^2)
+mean_quad
+#linreg with cubic term
+lm_fit_cubic <- lm(mpg~poly(horsepower, 3), data=Auto, subset=train2)
+mean_cubic_2 <- ((mpg-predict(lm_fit_cubic, Auto))[-train2]^2)
+mean_cubic_2
+```
+
+## Leave One Out Cross Validation
+
+```{r, echo=TRUE}
+# using glm for linear regression because it plays nicely with cv.glm
+library(boot)
+# create linear regression model
+glm_fit <-  glm(mpg~horsepower, data=Auto)
+# calculate cross validation error
+cv_err <- cv.glm(Auto, glm_fit)
+# print CV error
+cv_err$delta
+```
+
+From the above we see that our cross validation estimate for the test errors are approximately the same across both of our subsets. 
+
+We can repeat the procedure above for increasingly complex polynomial fits
+
+```{r, echo=TRUE}
+cv_error <- rep(0,5)
+for (i in 1:5){
+  glm_fit <- glm(mpg~poly(horsepower, i), data=Auto)
+  cv_error[i] <- cv.glm(Auto, glm_fit)$delta[1]
+}
+cv_error
+```
+
+From the above, we see that there is a drop in the estimated test MSE between the linear and quadratic fits, but higher order polynomials aren't doing much better. 
+
+## k-Fold Cross Validation
+
+```{r, echo=TRUE}
+# set seed for reproducibility
+set.seed(17)
+# set array for errors
+cv_error_10 <- rep(1:10)
+# loop it out
+for (i in 1:10){
+  glm_fit <- glm(mpg~poly(horsepower, i), data=Auto)
+  cv_error_10[i] <- cv.glm(Auto, glm_fit, K=10)$delta[1]
+}
+cv_error_10
+```
+From the above, we can see that the quartic polynomial fit has the minimum MSE. It is not such a great update over the quadratic term that it is the ideal choice. Due to interpretability concerns, it would likely be better to use the quadratic term. 
+
+
+## The Bootstrap
+
+```{r, echo=TRUE}
+
+# this function returns an estimate for alpha based on the observations indexed by the argument index
+# this attempts to minimize variance, or risk
+# we want to return the estimate of accuracy 
+alpha_fn <- function(data, index){
+  X <- data$X[index]
+  Y <- data$Y[index]
+  return ((var(Y)-cov(X,Y))/(var(X)+var(Y)-2*cov(X,Y)))
+}
+
+# test function on Portfolio data set
+alpha_fn(Portfolio, 1:100)
+```
+
+```{r, echo=TRUE}
+set.seed(1)
+#randomly select 100 observations in the range 1 -> 100 with replacement, then return estimate for alpha 
+alpha_fn(Portfolio, sample(100, 100, replace=T))
+```
+
+```{r, echo=TRUE}
+boot(Portfolio, alpha_fn, R=1000)
+```
+
+```{r, echo=TRUE}
+# assess the variability of the estimates for beta 0 and beta 1
+boot_fn <- function(data, index)
+  + return(coef(lm(mpg~horsepower, data=data, subset=index)))
+
+boot_fn(Auto, 1:392)
+
+boot_fn(Auto, sample(392, 392, replace=T))
+
+boot_fn(Auto, sample(392, 392, replace=T))
+
+boot(Auto, boot_fn, 1000)
+```
+
+```{r, echo=TRUE}
+boot_fn_2 <- function(data, index)
+  + coefficients(lm(mpg~horsepower+I(horsepower^2), data=data, subset=index))
+
+set.seed(1)
+
+boot(Auto, boot_fn_2, 1000)
+
+```
